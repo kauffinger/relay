@@ -6,6 +6,7 @@ use Prism\Relay\Enums\Transport as TransportEnum;
 use Prism\Relay\Exceptions\ServerConfigurationException;
 use Prism\Relay\Transport\HttpTransport;
 use Prism\Relay\Transport\StdioTransport;
+use Prism\Relay\Transport\StreamableHttpTransport;
 use Prism\Relay\Transport\TransportFactory;
 
 it('creates HTTP transport', function (): void {
@@ -52,4 +53,17 @@ it('throws exception for STDIO transport with missing env', function (): void {
 
     expect(fn (): \Prism\Relay\Transport\Transport => TransportFactory::create(TransportEnum::Stdio, $config))
         ->toThrow(ServerConfigurationException::class, 'The "env" configuration is required for stdio transport');
+});
+
+it('creates StreamableHttp transport', function (): void {
+    $config = [
+        'url' => 'http://example.com/api',
+        'api_key' => 'test-key',
+        'timeout' => 30,
+    ];
+
+    $transport = TransportFactory::create(TransportEnum::StreamableHttp, $config);
+
+    expect($transport)
+        ->toBeInstanceOf(StreamableHttpTransport::class);
 });

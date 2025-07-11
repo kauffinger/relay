@@ -52,6 +52,12 @@ return [
             'timeout' => 30,
             'transport' => \Prism\Relay\Enums\Transport::Http,
         ],
+        'streaming-mcp' => [
+            'url' => env('RELAY_STREAMING_SERVER_URL', 'http://localhost:8002/api'),
+            'api_key' => env('RELAY_STREAMING_SERVER_API_KEY'),
+            'timeout' => 30,
+            'transport' => \Prism\Relay\Enums\Transport::StreamableHttp,
+        ],
     ],
     'cache_duration' => env('RELAY_TOOLS_CACHE_DURATION', 60), // in minutes (0 to disable)
 ];
@@ -124,11 +130,11 @@ This command creates an interactive CLI that lets you input prompts that will be
 
 ## Transport Types
 
-Arc supports multiple transport mechanisms:
+Relay supports multiple transport mechanisms:
 
 ### HTTP Transport
 
-For MCP servers that communicate over HTTP:
+For MCP servers that communicate over HTTP with standard request/response:
 
 ```php
 'github' => [
@@ -138,6 +144,25 @@ For MCP servers that communicate over HTTP:
     'transport' => Transport::Http,
 ],
 ```
+
+### Streamable HTTP Transport
+
+For MCP servers that support streaming responses via Server-Sent Events (SSE) or JSON, as per the [MCP 2025-03-26 specification](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http):
+
+```php
+'streaming-server' => [
+    'url' => env('RELAY_STREAMING_SERVER_URL', 'http://localhost:8002/api'),
+    'api_key' => env('RELAY_STREAMING_SERVER_API_KEY'),
+    'timeout' => 30,
+    'transport' => Transport::StreamableHttp,
+],
+```
+
+The StreamableHttp transport:
+- Sends `Accept: application/json, text/event-stream` headers
+- Handles both SSE (`text/event-stream`) and JSON (`application/json`) responses
+- Manages session persistence via `Mcp-Session-Id` headers
+- Parses SSE events to extract JSON-RPC responses
 
 ### STDIO Transport
 

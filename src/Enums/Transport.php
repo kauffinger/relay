@@ -8,4 +8,5 @@ enum Transport
 {
     case Http;
     case Stdio;
+    case StreamableHttp;
 }
