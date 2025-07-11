@@ -57,6 +57,7 @@ return [
             'api_key' => env('RELAY_STREAMING_SERVER_API_KEY'),
             'timeout' => 30,
             'transport' => \Prism\Relay\Enums\Transport::StreamableHttp,
+            'send_initialize' => true, // Optional: send MCP initialize handshake
         ],
     ],
     'cache_duration' => env('RELAY_TOOLS_CACHE_DURATION', 60), // in minutes (0 to disable)
@@ -155,6 +156,7 @@ For MCP servers that support streaming responses via Server-Sent Events (SSE) or
     'api_key' => env('RELAY_STREAMING_SERVER_API_KEY'),
     'timeout' => 30,
     'transport' => Transport::StreamableHttp,
+    'send_initialize' => true, // Optional: send MCP initialize handshake (default: true)
 ],
 ```
 
@@ -162,6 +164,8 @@ The StreamableHttp transport:
 - Sends `Accept: application/json, text/event-stream` headers
 - Handles both SSE (`text/event-stream`) and JSON (`application/json`) responses
 - Manages session persistence via `Mcp-Session-Id` headers
+- Automatically generates session IDs when required by the server
+- Implements proper MCP initialization handshake (`initialize` + `notifications/initialized`)
 - Parses SSE events to extract JSON-RPC responses
 
 ### STDIO Transport

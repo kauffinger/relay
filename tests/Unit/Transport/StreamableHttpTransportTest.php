@@ -269,3 +269,115 @@ it('clears session ID on close', function (): void {
     $transport->close();
     $transport->sendRequest('second');
 });
+
+it('generates session ID when configured', function (): void {
+    $requestCount = 0;
+
+    Http::fake(function ($request) use (&$requestCount) {
+        $requestCount++;
+
+        expect($request->headers())->toHaveKey('Mcp-Session-Id');
+        $sessionId = $request->header('Mcp-Session-Id')[0];
+        expect($sessionId)->toBeString();
+        expect(strlen($sessionId))->toBeGreaterThan(20);
+
+        if ($requestCount === 1) {
+            // Initialize request
+            return Http::response([
+                'jsonrpc' => '2.0',
+                'id' => $request->data()['id'],
+                'result' => [
+                    'protocolVersion' => '2024-11-05',
+                    'capabilities' => new \stdClass,
+                ],
+            ]);
+        }
+
+        if ($requestCount === 2) {
+            // Initialized notification
+            return Http::response('', 200);
+        }
+
+        // Regular request
+        return Http::response(['jsonrpc' => '2.0', 'id' => $request->data()['id'], 'result' => []]);
+    });
+
+    $config = [
+        'url' => 'http://example.com/api',
+        'send_initialize' => false,
+    ];
+    $transport = new StreamableHttpTransport($config);
+    $transport->start();
+
+    $transport->sendRequest('test');
+});
+
+it('handles session ID requirement error properly', function (): void {
+    Http::fake([
+        'http://example.com/api' => Http::response([
+            'jsonrpc' => '2.0',
+            'id' => '1',
+            'error' => [
+                'code' => -32600,
+                'message' => 'Mcp-Session-Id header required for POST requests',
+            ],
+        ]),
+    ]);
+
+    $config = ['url' => 'http://example.com/api'];
+    $transport = new StreamableHttpTransport($config);
+
+    expect(fn (): array => $transport->sendRequest('test'))
+        ->toThrow(TransportException::class, 'Mcp-Session-Id header required for POST requests');
+});
+
+it('sends MCP initialize request on start', function (): void {
+    $requestCount = 0;
+
+    Http::fake(function ($request) use (&$requestCount) {
+        $requestCount++;
+        $payload = $request->data();
+
+        if ($requestCount === 1) {
+            // First request should be initialize (without session ID)
+            expect($payload['method'])->toBe('initialize');
+            expect($payload['params']['protocolVersion'])->toBe('2024-11-05');
+            expect($payload['params']['clientInfo']['name'])->toBe('prism-relay');
+            expect($request->headers())->not->toHaveKey('Mcp-Session-Id');
+
+            return Http::response([
+                'jsonrpc' => '2.0',
+                'id' => $payload['id'],
+                'result' => [
+                    'protocolVersion' => '2024-11-05',
+                    'capabilities' => new \stdClass,
+                    'serverInfo' => [
+                        'name' => 'test-server',
+                        'version' => '1.0.0',
+                    ],
+                ],
+            ], 200, ['Mcp-Session-Id' => 'server-generated-session-123']);
+        }
+
+        if ($requestCount === 2) {
+            // Second request should be initialized notification (with session ID from server)
+            expect($payload['method'])->toBe('notifications/initialized');
+            expect($payload)->not->toHaveKey('id'); // Notifications don't have IDs
+            expect($request->header('Mcp-Session-Id')[0])->toBe('server-generated-session-123');
+
+            return Http::response('', 200); // Empty response for notification
+        }
+
+        return Http::response(['error' => 'Unexpected request']);
+    });
+
+    $config = [
+        'url' => 'http://example.com/api',
+        'send_initialize' => true, // Explicitly enable initialization
+    ];
+    $transport = new StreamableHttpTransport($config);
+
+    $transport->start();
+
+    expect($requestCount)->toBe(2);
+});

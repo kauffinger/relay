@@ -24,8 +24,9 @@ class StreamableHttpTransport implements Transport
     #[\Override]
     public function start(): void
     {
-        // Streamable HTTP transport can optionally initialize a session
-        // This is handled on the first request
+        if ($this->shouldSendInitializeRequest()) {
+            $this->sendInitializeRequest();
+        }
     }
 
     /**
@@ -103,15 +104,30 @@ class StreamableHttpTransport implements Transport
     }
 
     /**
+     * @param  array<string, mixed>  $payload
+     */
+    protected function sendHttpRequestWithoutSessionId(array $payload): Response
+    {
+        $request = Http::timeout($this->getTimeout())
+            ->withHeaders($this->getHeaders(skipSessionId: true))
+            ->when(
+                $this->hasApiKey(),
+                fn ($http) => $http->withToken($this->getApiKey())
+            );
+
+        return $request->post($this->getServerUrl(), $payload);
+    }
+
+    /**
      * @return array<string, string>
      */
-    protected function getHeaders(): array
+    protected function getHeaders(bool $skipSessionId = false): array
     {
         $headers = [
             'Accept' => 'application/json, text/event-stream',
         ];
 
-        if ($this->sessionId !== null) {
+        if (! $skipSessionId && $this->sessionId !== null) {
             $headers['Mcp-Session-Id'] = $this->sessionId;
         }
 
@@ -121,7 +137,7 @@ class StreamableHttpTransport implements Transport
     protected function updateSessionIdFromResponse(Response $response): void
     {
         $sessionId = $response->header('Mcp-Session-Id');
-        if ($sessionId !== null) {
+        if ($sessionId !== '') {
             $this->sessionId = $sessionId;
         }
     }
@@ -300,5 +316,94 @@ class StreamableHttpTransport implements Transport
         throw new TransportException(
             "JSON-RPC error: {$errorMessage} (code: {$errorCode}){$detailsSuffix}"
         );
+    }
+
+    /**
+     * Check if we should send initialize request on start
+     */
+    protected function shouldSendInitializeRequest(): bool
+    {
+        return $this->config['send_initialize'] ?? true;
+    }
+
+    /**
+     * Send MCP initialize request and handle initialization sequence
+     *
+     * @throws TransportException
+     */
+    protected function sendInitializeRequest(): void
+    {
+        try {
+            // Send initialize request (without session ID)
+            $this->requestId++;
+            $initializePayload = [
+                'jsonrpc' => '2.0',
+                'id' => (string) $this->requestId,
+                'method' => 'initialize',
+                'params' => [
+                    'protocolVersion' => '2024-11-05',
+                    'capabilities' => new \stdClass,
+                    'clientInfo' => [
+                        'name' => 'prism-relay',
+                        'version' => '1.0.0',
+                    ],
+                ],
+            ];
+
+            $response = $this->sendHttpRequestWithoutSessionId($initializePayload);
+            $this->updateSessionIdFromResponse($response);
+
+            // Process initialize response
+            $contentType = $response->header('Content-Type') ?? '';
+            if (str_contains($contentType, 'text/event-stream')) {
+                $this->processStreamingResponse($response);
+            } else {
+                $this->processJsonResponse($response);
+            }
+
+            // Send initialized notification
+            $this->sendInitializedNotification();
+        } catch (\Throwable $e) {
+            throw new TransportException(
+                "Failed to initialize MCP session: {$e->getMessage()}",
+                previous: $e
+            );
+        }
+    }
+
+    /**
+     * Send initialized notification to complete the MCP handshake
+     *
+     * @throws TransportException
+     */
+    protected function sendInitializedNotification(): void
+    {
+        try {
+            $notificationPayload = [
+                'jsonrpc' => '2.0',
+                'method' => 'notifications/initialized',
+            ];
+
+            $response = $this->sendHttpRequest($notificationPayload);
+            $this->updateSessionIdFromResponse($response);
+
+            // Process notification response (may be empty)
+            if ($response->successful()) {
+                $body = trim($response->body());
+                if ($body !== '') {
+                    $contentType = $response->header('Content-Type') ?? '';
+                    if (str_contains($contentType, 'text/event-stream')) {
+                        $this->processStreamingResponse($response);
+                    } else {
+                        $this->processJsonResponse($response);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            throw new TransportException(
+                "Failed to send initialized notification: {$e->getMessage()}",
+                previous: $e
+            );
+        }
     }
 }
