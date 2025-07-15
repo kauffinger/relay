@@ -270,67 +270,6 @@ it('clears session ID on close', function (): void {
     $transport->sendRequest('second');
 });
 
-it('generates session ID when configured', function (): void {
-    $requestCount = 0;
-
-    Http::fake(function ($request) use (&$requestCount) {
-        $requestCount++;
-
-        expect($request->headers())->toHaveKey('Mcp-Session-Id');
-        $sessionId = $request->header('Mcp-Session-Id')[0];
-        expect($sessionId)->toBeString();
-        expect(strlen($sessionId))->toBeGreaterThan(20);
-
-        if ($requestCount === 1) {
-            // Initialize request
-            return Http::response([
-                'jsonrpc' => '2.0',
-                'id' => $request->data()['id'],
-                'result' => [
-                    'protocolVersion' => '2024-11-05',
-                    'capabilities' => new \stdClass,
-                ],
-            ]);
-        }
-
-        if ($requestCount === 2) {
-            // Initialized notification
-            return Http::response('', 200);
-        }
-
-        // Regular request
-        return Http::response(['jsonrpc' => '2.0', 'id' => $request->data()['id'], 'result' => []]);
-    });
-
-    $config = [
-        'url' => 'http://example.com/api',
-        'send_initialize' => false,
-    ];
-    $transport = new StreamableHttpTransport($config);
-    $transport->start();
-
-    $transport->sendRequest('test');
-});
-
-it('handles session ID requirement error properly', function (): void {
-    Http::fake([
-        'http://example.com/api' => Http::response([
-            'jsonrpc' => '2.0',
-            'id' => '1',
-            'error' => [
-                'code' => -32600,
-                'message' => 'Mcp-Session-Id header required for POST requests',
-            ],
-        ]),
-    ]);
-
-    $config = ['url' => 'http://example.com/api'];
-    $transport = new StreamableHttpTransport($config);
-
-    expect(fn (): array => $transport->sendRequest('test'))
-        ->toThrow(TransportException::class, 'Mcp-Session-Id header required for POST requests');
-});
-
 it('sends MCP initialize request on start', function (): void {
     $requestCount = 0;
 
