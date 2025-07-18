@@ -305,8 +305,92 @@ class Relay
             $description = $this->getParameterDescription($name, $property, $definition);
             $required = in_array($name, $requiredParams);
 
-            $this->addParameter($tool, $name, $type, $description, $required);
+            $schema = $this->createSchemaFromProperty($name, $description, $property);
+
+            if ($schema instanceof \Prism\Prism\Contracts\Schema) {
+                $tool->withParameter($schema, $required);
+            }
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $property
+     */
+    protected function createSchemaFromProperty(string $name, string $description, array $property): ?\Prism\Prism\Contracts\Schema
+    {
+        $type = data_get($property, 'type');
+
+        return match ($type) {
+            'string' => new \Prism\Prism\Schema\StringSchema($name, $description),
+            'number', 'integer' => new \Prism\Prism\Schema\NumberSchema($name, $description),
+            'boolean' => new \Prism\Prism\Schema\BooleanSchema($name, $description),
+            'array' => $this->createArraySchema($name, $description, $property),
+            'object' => $this->createObjectSchema($name, $description, $property),
+            default => new \Prism\Prism\Schema\StringSchema($name, $description),
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $property
+     */
+    protected function createArraySchema(string $name, string $description, array $property): \Prism\Prism\Schema\ArraySchema
+    {
+        $itemsDefinition = data_get($property, 'items', []);
+
+        // Create a default string schema for items if not specified
+        $itemName = $name.'_item';
+        $itemDescription = 'Item in '.$name;
+
+        if (! empty($itemsDefinition)) {
+            $itemDescription = data_get($itemsDefinition, 'description', $itemDescription);
+
+            $itemsSchema = $this->createSchemaFromProperty($itemName, $itemDescription, $itemsDefinition);
+
+            // If schema creation failed, fall back to string schema
+            if (! $itemsSchema instanceof \Prism\Prism\Contracts\Schema) {
+                $itemsSchema = new \Prism\Prism\Schema\StringSchema($itemName, $itemDescription);
+            }
+        } else {
+            $itemsSchema = new \Prism\Prism\Schema\StringSchema($itemName, $itemDescription);
+        }
+
+        return new \Prism\Prism\Schema\ArraySchema($name, $description, $itemsSchema);
+    }
+
+    /**
+     * @param  array<string, mixed>  $property
+     */
+    protected function createObjectSchema(string $name, string $description, array $property): \Prism\Prism\Schema\ObjectSchema
+    {
+        $properties = data_get($property, 'properties', []);
+        $requiredFields = data_get($property, 'required', []);
+        $additionalProperties = data_get($property, 'additionalProperties', false);
+
+        $schemas = [];
+
+        foreach ($properties as $propName => $propDefinition) {
+            $propType = data_get($propDefinition, 'type');
+            if (empty($propType)) {
+                continue;
+            }
+
+            $propDescription = data_get($propDefinition, 'description', "Property {$propName}");
+
+            // Recursively create schema for object properties
+            $propSchema = $this->createSchemaFromProperty($propName, $propDescription, $propDefinition);
+
+            if ($propSchema instanceof \Prism\Prism\Contracts\Schema) {
+                $schemas[] = $propSchema;
+            }
+        }
+
+        return new \Prism\Prism\Schema\ObjectSchema(
+            $name,
+            $description,
+            $schemas,
+            $requiredFields,
+            $additionalProperties
+        );
     }
 
     /**
@@ -328,16 +412,6 @@ class Relay
         $toolName = data_get($definition, 'name', 'unknown');
 
         return "Parameter {$name} for {$toolName}";
-    }
-
-    protected function addParameter(Tool $tool, string $name, string $type, string $description, bool $required): void
-    {
-        match ($type) {
-            'string' => $tool->withStringParameter($name, $description, $required),
-            'number', 'integer' => $tool->withNumberParameter($name, $description, $required),
-            'boolean' => $tool->withBooleanParameter($name, $description, $required),
-            default => $tool->withStringParameter($name, $description, $required),
-        };
     }
 
     /**
